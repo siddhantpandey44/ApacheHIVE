@@ -1,0 +1,161 @@
+-- Data Cleaning and Analysis using HIVE
+
+Dataset : Used cars for sale in Germany and Czech Republic since 2015
+Source :  https://www.kaggle.com/mirosval/personal-cars-classifieds
+The data was scraped from several websites in Czech Republic and Germany over a period of more than a year.
+
+-- Data Cleaning
+-- The data is loaded into a table named cars.
+
+hive> CREATE EXTERNAL TABLE IF NOT EXISTS cars (
+    > maker STRING, 
+    > model STRING, 
+    > mileage INT, 
+    > manufacture_year INT, 
+    > engine_displacement INT, 
+    > engine_power INT, 
+    > body_type STRING, 
+    > color_slug STRING, 
+    > stk_year STRING, 
+    > transmission STRING, 
+    > door_count INT, 
+    > seat_count INT, 
+    > fuel_type STRING, 
+    > date_created string, 
+    > date_last_seen string,
+    > price_eur FLOAT) 
+    > ROW FORMAT DELIMITED FIELDS TERMINATED BY ',' 
+    > LOCATION '/BigData/hive' 
+    > TBLPROPERTIES("skip.header.line.count"="1");
+    
+-- Further, datatype of date_created, date_last_seen changed to ‘date’ datatype as currently it is ‘string’ datatype.
+-- Following code was used to convert the datatypes and a new table cars_new was created :
+
+hive> CREATE TABLE IF NOT EXISTS cars_new AS 
+      SELECT  maker, model, mileage, manufacture_year, engine_displacement, engine_power ,
+          body_type, color_slug, stk_year, transmission , door_count, seat_count, fuel_type, 
+          CAST(to_date(from_unixtime(unix_timestamp(date_created,'yyyy-MM-dd'))) AS date) as date_created,
+          CAST(to_date(from_unixtime(unix_timestamp(date_last_seen,'yyyy-MM-dd'))) AS date) as date_last_seen,
+          price_eur 
+      FROM cars;
+
+--The ‘maker’ column contained 518915 rows with blank values. These empty rows were removed and a new table was created named cars_new1. Code used:
+
+hive> CREATE TABLE cars_new1 AS SELECT * 
+                                FROM cars_new 
+                                WHERE maker <> '';
+
+--Value of ‘body_type’ column was blank for more than 32% records. Also, more than 94% records had blank value for ‘color_slug’ column.
+--For column ‘stk_year’, the values were either blank or ‘None’. All these columns have been removed for further analysis.
+--Values under ‘door_count’ and ‘seat_count’ were same for the records. Hence, ‘door_count’ column was removed to avoid redundancy. 
+--Also, columns ‘engine_displacement’ and ‘date_last_seen’ were removed as they do not contain any major data which could be used in our analysis.
+--The values for ‘manufacture_year’ has been kept older than 1996 and also, all the records which has price less than $500 and more than $1,000,000 has been removed for our data analysis as there very many values did not seem correct or logical.
+--Below code was used to perform all the operations and a new table – ‘cars_cleaned’ was created :
+
+hive> CREATE TABLE IF NOT EXISTS cars_cleaned AS 
+     SELECT  maker, model, mileage, manufacture_year, engine_power, transmission, seat_count, fuel_type, date_created,price_eur 
+     FROM cars_final
+     WHERE price_eur BETWEEN 500 AND 1000000 AND manufacture_year > 1996 AND mileage <= 1000000;
+
+ 
+-- Data Analysis
+
+--	Which are the most common manufacture years for all the listed cars?
+
+hive> SELECT manufacture_year, total_cars  
+      FROM (SELECT COUNT(maker) as total_cars, manufacture_year 
+            FROM cars_cleaned 
+            GROUP BY manufacture_year)as temp 
+      ORDER BY total_cars DESC LIMIT 5; 
+ 
+-- 2015 is the most common manufacture year with 372943 cars with year 2015. Then, it is followed by 2012, 2011, 2014 and 2013. 
+-- These data were scrapped in from 2015 to 2017. Majority of cars are not older than 5 years.
+
+
+-- What is average price of the cars for every manufacture year? Or Does manufacture year influence car pricing?
+
+hive> SELECT manufacture_year, Average_price 
+      FROM (SELECT manufacture_year, ROUND(AVG(price_eur),2) AS Average_price 
+            FROM cars_cleaned 
+            GROUP BY manufacture_year) AS temp 
+      ORDER BY Average_price DESC;
+-- The average price- 22872.25 is highest for cars with manufacture year 2015. 
+-- The older the manufacturing year, lesser the price of car. The average price is almost ten times cheaper for cars with manufacture year 1997 than 2015.
+
+ 
+--  Which is the most common car manufacturer or company in used cars market?
+
+hive> SELECT tmp.*,ROUND(tmp.cnt/(SELECT SUM(cnt) AS snt 
+      FROM (SELECT maker,COUNT(*) AS cnt FROM cars_cleaned GROUP BY maker) AS tmp2)*100,2) AS mshare FROM (SELECT maker,COUNT(*) AS cnt FROM cars_cleaned GROUP BY maker) AS tmp 
+      ORDER BY mshare DESC LIMIT 5;
+-- Volkaswagen, Mercedes-Benz, BMW, Skoda and Audi are the top five car makers in used car market as per the data.
+
+
+--	Does engine power impact car pricing?
+
+hive> SELECT AVG( price_eur) AS average_price 
+      FROM cars_cleaned 
+      WHERE engine_power in (SELECT engine_power 
+                             FROM cars_cleaned 
+                             ORDER BY engine_power DESC LIMIT 100);
+
+hive> SELECT AVG( price_eur) AS average_price 
+      FROM cars_cleaned WHERE engine_power in (SELECT engine_power 
+                                               FROM cars_cleaned 
+                                               WHERE engine_power IS NOT NULL 
+                                               ORDER BY engine_power ASC LIMIT 100);
+
+hive> SELECT AVG( price_eur) AS average_price 
+      FROM cars_cleaned WHERE engine_power in (SELECT engine_power 
+                                               FROM cars_cleaned 
+                                               ORDER BY engine_power BETWEEN 400 AND 800 DESC LIMIT 100);
+-- To analyze the relationship of engine power with car pricing, different averages were calculated for three samples.
+-- First sample contains cars with least engine power. Second sample is cars with maximum engine power and last on is random selection of cars with engine power more than 400.
+
+-- Based on results, there is no apparent impact of engine power on car prices as for maximum power engine, average car price is 25609.29 euros and for minimum power engine, it is 26162.09 which is almost equal to the first sample.
+
+
+--	What are the types of fuel used by the cars?
+ 
+hive> SELECT fuel_type, COUNT(fuel_type) as cnt 
+      FROM cars_cleaned 
+      WHERE fuel_type <> '' 
+      GROUP BY fuel_type 
+      ORDER BY cnt DESC;  
+-- As per the data, diesel and gasoline are the two most common fuel types. CNG is the least used fuel.
+
+
+--	Which type of cars fuel-wise is comparatively expensive?
+ 
+hive> SELECT fuel_type, COUNT(fuel_type) AS cnt, ROUND(AVG(price_eur),2) AS average_price 
+      FROM cars_cleaned WHERE fuel_type <> '' 
+      GROUP BY fuel_type 
+      ORDER BY cnt DESC;
+-- Diesel cars are most expensive among the fuels used. In the data present, diesel has an average of 13K euros. The second most expensive are gasoline cars.
+
+-- Which is the most common transmission in used car market?
+ 
+hive> SELECT transmission, COUNT(transmission) AS total_Count 
+      FROM cars_cleaned WHERE transmission <> '' 
+      GROUP BY transmission;
+-- Manual transmission is more common than automatic.
+
+
+--	Does car mileage impact price of cars?
+
+hive> SELECT mileage, ROUND(AVG(price_eur),2) AS average_price 
+      FROM cars_cleaned 
+      WHERE mileage is not null 
+      GROUP BY mileage 
+      ORDER BY mileage ASC LIMIT 25;
+ 
+
+hive> SELECT mileage, ROUND(AVG(price_eur),2) AS average_price 
+      FROM cars_cleaned 
+      GROUP BY mileage 
+      ORDER BY mileage DESC LIMIT 25;
+
+-- To analyze, two samples were considered. First, some data with maximum mileage were taken and average price was calculated. 
+-- Second, data with minimum mileage and average price for these cars was calculated.
+
+-- As per the results, the price is higher for cars where the mileage is lower. The price reduces with higher mileage.
