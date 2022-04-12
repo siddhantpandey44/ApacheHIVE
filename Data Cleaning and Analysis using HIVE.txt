@@ -1,9 +1,5 @@
 -- Data Cleaning and Analysis using HIVE
 
-Dataset : Used cars for sale in Germany and Czech Republic since 2015
-Source :  https://www.kaggle.com/mirosval/personal-cars-classifieds
-The data was scraped from several websites in Czech Republic and Germany over a period of more than a year.
-
 -- Data Cleaning
 -- The data is loaded into a table named cars.
 
